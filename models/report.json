@@ -1,0 +1,17 @@
+{
+  "model_type": "RandomForestRegressor",
+  "features": [
+    "price",
+    "promo",
+    "wheat_price",
+    "sugar_price",
+    "unit_cost",
+    "month",
+    "dow",
+    "sales_lag1",
+    "price_lag1",
+    "sales_ma7",
+    "price_ma7"
+  ],
+  "mae": 23.162
+}
