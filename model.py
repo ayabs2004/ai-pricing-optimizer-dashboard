@@ -21,20 +21,20 @@ from sklearn.metrics import mean_absolute_error
 
 # mean_absolute_error → Metric to evaluate prediction accuracy.
 FEATURES = [
-    "price", "promo",
-    "wheat_price", "sugar_price", "unit_cost",
-    "month", "dow",
+    "price", "promo", "competitor_price", "unit_cost",
+    "month", "day_of_week",
     "sales_lag1", "price_lag1", "sales_ma7", "price_ma7"
 ]
+
 # Defines columns used as features for the model.
 
 # Includes price, promotion, raw material costs, time features, and rolling stats.
 
 def compute_unit_cost_if_missing(df: pd.DataFrame) -> pd.DataFrame:
     if "unit_cost" not in df.columns:
-        # Adjust weights/base for your business reality
-        df["unit_cost"] = 0.003*df["wheat_price"].astype(float) + 0.002*df["sugar_price"].astype(float) + 1.8
+        df["unit_cost"] = df["price"] * 0.6  # fallback heuristic
     return df
+
 #     Checks if unit_cost exists.
 
 # If not, computes it using wheat and sugar prices + base cost 1.8.
@@ -47,7 +47,8 @@ def add_time_and_roll_features(df: pd.DataFrame) -> pd.DataFrame:
     d["date"] = pd.to_datetime(d["date"])
     d = d.sort_values(["product", "date"]).reset_index(drop=True)
     d["month"] = d["date"].dt.month
-    d["dow"] = d["date"].dt.dayofweek
+    d["day_of_week"] = d["date"].dt.dayofweek
+
 # Converts date to datetime.
 
 # Sorts by product and date.

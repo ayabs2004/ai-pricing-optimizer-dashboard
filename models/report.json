@@ -3,15 +3,14 @@
   "features": [
     "price",
     "promo",
-    "wheat_price",
-    "sugar_price",
+    "competitor_price",
     "unit_cost",
     "month",
-    "dow",
+    "day_of_week",
     "sales_lag1",
     "price_lag1",
     "sales_ma7",
     "price_ma7"
   ],
-  "mae": 23.162
+  "mae": 1.522
 }
