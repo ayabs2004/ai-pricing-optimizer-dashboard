@@ -3,143 +3,198 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+#from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+#import matplotlib.pyplot as plt
+#import seaborn as sns
 
-# Custom modules
+
 from data_gen import generate
-from optimization import optimize_price
+from optimization import make_price_grid, optimize_price
 from model import (
     compute_unit_cost_if_missing,
     add_time_and_roll_features,
     train,
     FEATURES
-) 
+)
+# def evaluate_model(model, X, y, display_plot=True):
+#     """
+#     Evaluate a regression model with multiple metrics and optional plots.
+#     
+#     Parameters:
+#         model : trained regression model
+#         X     : features (DataFrame)
+#         y     : true target values (Series)
+#         display_plot : whether to plot results
+#     
+#     Returns:
+#         metrics_dict : dict with MAE, RMSE, R², MAPE
+#     """
+#     y_pred = model.predict(X)
 
-# ------------------- Dashboard Configuration -------------------
+#     # Metrics
+#     mae = mean_absolute_error(y, y_pred)
+#     rmse = np.sqrt(mean_squared_error(y, y_pred))
+#     r2 = r2_score(y, y_pred)
+#     # Avoid division by zero for MAPE
+#     mask = y != 0
+#     mape = np.mean(np.abs((y[mask] - y_pred[mask]) / y[mask])) * 100
+
+#     metrics_dict = {
+#         "MAE": mae,
+#         "RMSE": rmse,
+#         "R2": r2,
+#         "MAPE": mape
+#     }
+
+#     if display_plot:
+#         # Actual vs Predicted
+#         fig1, ax1 = plt.subplots()
+#         ax1.scatter(y, y_pred, alpha=0.7)
+#         ax1.plot([y.min(), y.max()], [y.min(), y.max()], 'r--', linewidth=2)
+#         ax1.set_xlabel("Actual Sales")
+#         ax1.set_ylabel("Predicted Sales")
+#         ax1.set_title("Actual vs Predicted Sales")
+#         st.pyplot(fig1)
+
+#         # Residuals
+#         residuals = y - y_pred
+#         fig2, ax2 = plt.subplots()
+#         sns.histplot(residuals, kde=True, bins=30, ax=ax2)
+#         ax2.set_title("Residuals Distribution")
+#         st.pyplot(fig2)
+
+#     return metrics_dict
+# ------------------- Page config -------------------
 st.set_page_config(page_title="AI Pricing Dashboard", layout="wide")
 st.title("💹 AI Pricing Optimization Dashboard")
-st.caption("Predict demand from price & competitors, then maximize profit by choosing the best price.")
+st.caption("Predict demand from price & competitors, then maximize profit.")
 
 # ------------------- Sidebar -------------------
 with st.sidebar:
     st.header("Data")
 
-    uploaded = st.file_uploader("Upload CSV (or leave empty to auto-load synthetic)", type=["csv"])
+    uploaded = st.file_uploader("Upload CSV (or auto-load synthetic)", type=["csv"])
 
     if st.button("Load synthetic sample"):
-        df = generate(200)
-        st.session_state["df"] = df
-        st.success("Loaded synthetic dataset.")
+        st.session_state["df"] = generate()
+        st.success("Synthetic dataset loaded.")
 
     if uploaded is not None:
-        df = pd.read_csv(uploaded)
-        st.session_state["df"] = df
+        st.session_state["df"] = pd.read_csv(uploaded)
         st.success("CSV uploaded.")
 
     st.markdown("---")
-
     st.header("Training & Optimization")
-    min_margin = st.number_input("Min margin %", value=5.0, min_value=0.0, step=0.5) / 100.0
-    grid_step = st.number_input("Price grid step", value=0.05, min_value=0.01, step=0.01)
-    cap_min = st.number_input("Hard min price (0=auto)", value=0.0, min_value=0.0, step=0.1)
-    cap_max = st.number_input("Hard max price (0=auto)", value=0.0, min_value=0.0, step=0.1)
 
-# ------------------- Main Flow -------------------
+    min_margin = st.number_input("Min margin %", 5.0) / 100
+    grid_step = st.number_input("Price grid step", value=0.05, min_value=0.01)
+    cap_min = st.number_input("Hard min price (0=auto)", 0.0)
+    cap_max = st.number_input("Hard max price (0=auto)", 0.0)
+
+# ------------------- Main -------------------
 if "df" not in st.session_state:
-    st.info("Upload a CSV or click 'Load synthetic sample' in the sidebar to get started.")
+    st.info("Upload a CSV or load a synthetic dataset.")
+    st.stop()
 
-else:
-    raw_df = st.session_state["df"].copy()
+raw_df = st.session_state["df"].copy()
+st.subheader("Preview")
+st.dataframe(raw_df.head(20), use_container_width=True)
 
-    st.subheader("Preview")
-    st.dataframe(raw_df.head(20), use_container_width=True)
+# ---------------- Product selection ----------------
+if "product" not in raw_df.columns:
+    st.error("Dataset must contain a 'product' column.")
+    st.stop()
 
-    # ---------------- Product Selection ----------------
-    if "product" not in raw_df.columns:
-        st.error("❌ Your dataset has no 'product' column. Add it first.")
-        st.stop()
+product = st.selectbox("Choose product", raw_df["product"].unique())
+df = raw_df[raw_df["product"] == product].copy()
 
-    products = raw_df["product"].unique().tolist()
+# ---------------- Feature prep ----------------
+work = compute_unit_cost_if_missing(df)
+work = add_time_and_roll_features(work)
 
-    st.markdown("### Select Product")
-    selected_product = st.selectbox("Choose a product", products)
+# Safety
 
-    # Filter data for this product
-    df = raw_df[raw_df["product"] == selected_product].copy()
 
-    if df.empty:
-        st.error("❌ No data found for selected product.")
-        st.stop()
+work = work.dropna(subset=FEATURES + ["sales"])
 
-    st.success(f"Product selected: **{selected_product}** ({len(df)} rows)")
+# ---------------- Train ----------------
 
-    # ---------- Feature Preparation ----------
-    work = compute_unit_cost_if_missing(df)
-    work = add_time_and_roll_features(work)
+model, mae,extra = train(work)
+y_true = work["sales"]
+X = work[FEATURES]
 
-    # ---------- Train Model ----------
-    st.markdown("### Train model")
-    model, mae = train(work)
-    st.success(f"Validation MAE: {mae:.2f} units")
+# metrics = evaluate_model(model, X, y_true)
+# st.success(
+#     f"Validation MAE: {metrics['MAE']:.2f} units | "
+#     f"RMSE: {metrics['RMSE']:.2f} | "
+#     f"R²: {metrics['R2']:.2f} | "
+#     f"MAPE: {metrics['MAPE']:.2f}%"
+# )
 
-    # ---------- Context for Optimization ----------
-    latest = work.sort_values("date").iloc[-1].copy()
 
-    st.markdown("### Context (you can tweak)")
-    col1, col2, col3, col4 = st.columns(4)
 
-    latest["promo"] = int(col1.selectbox("Promo", options=[0, 1], index=int(latest.get("promo", 0))))
-    latest["competitor_price"] = float(col2.number_input("Competitor price", value=float(latest["competitor_price"])))
-    latest["unit_cost"] = float(col3.number_input("Unit cost", value=float(latest["unit_cost"])))
-    latest["price"] = float(col4.number_input("Current price (reference)", value=float(latest["price"])))
 
-    # ---------- Optimization ----------
-    pmin = cap_min if cap_min > 0 else None
-    pmax = cap_max if cap_max > 0 else None
+# ---------------- Optimization context ----------------
+latest = work.sort_values("date").iloc[-1].copy()
 
-    bundle = {"model": model, "features": FEATURES}
-    opt_result = optimize_price(
-        latest, bundle,
-        price_min=pmin,
-        price_max=pmax,
-        min_margin_pct=min_margin,
-        grid_step=grid_step
-    )
+for col, default in {
+    "promo": 0,
+    "price": latest["price"],
+    "unit_cost": latest["unit_cost"],
+    "competitor_price": latest["price"]
+}.items():
+    if col not in latest or pd.isna(latest[col]):
+        latest[col] = default
 
-    best_price = opt_result["best_price"]
-    best_sales = opt_result["predicted_sales"]
-    best_profit = opt_result["expected_profit"]
+st.markdown("### Context")
+c1, c2, c3, c4 = st.columns(4)
 
-    st.markdown("### Recommendation")
-    st.metric("💡 Recommended Price", f"{best_price:.2f}")
-    st.metric("📦 Predicted Sales", f"{best_sales:.0f} units")
-    st.metric("💰 Expected Profit", f"{best_profit:.2f}")
+latest["promo"] = c1.selectbox("Promo", [0, 1], index=int(latest["promo"]))
+latest["competitor_price"] = c2.number_input("Competitor price", value=float(latest["competitor_price"]))
+latest["unit_cost"] = c3.number_input("Unit cost", value=float(latest["unit_cost"]))
+latest["price"] = c4.number_input("Reference price", value=float(latest["price"]))
 
-    # ---------- Plots ----------
-    prices = np.arange(
-        opt_result["price_min_considered"],
-        opt_result["price_max_considered"] + 1e-9,
-        grid_step
-    )
+# ---------------- Optimization ----------------
+unit_cost = latest["unit_cost"]
 
-    X_test = pd.DataFrame([latest] * len(prices))
-    X_test["price"] = prices
-    demand_hat = np.clip(model.predict(X_test[FEATURES]), 0, None)
-    profit = (prices - latest["unit_cost"]) * demand_hat
+pmin = cap_min if cap_min > 0 else max(unit_cost * (1 + min_margin), latest["price"] * 0.6)
+pmax = cap_max if cap_max > 0 else latest["price"] * 1.8
 
-    c1, c2 = st.columns(2)
+bundle = {"model": model, "features": FEATURES}
 
-    with c1:
-        st.markdown("**Predicted demand vs. price**")
-        fig1 = px.line(x=prices, y=demand_hat, labels={"x": "Price", "y": "Predicted sales"})
-        fig1.add_vline(x=best_price, line_dash="dash", line_color="green")
-        st.plotly_chart(fig1, use_container_width=True)
+opt = optimize_price(
+    latest,
+    bundle,
+    price_min=pmin,
+    price_max=pmax,
+    min_margin_pct=min_margin,
+    grid_step=grid_step
+)
 
-    with c2:
-        st.markdown("**Profit vs. price**")
-        fig2 = px.line(x=prices, y=profit, labels={"x": "Price", "y": "Profit"})
-        fig2.add_vline(x=best_price, line_dash="dash", line_color="green")
-        st.plotly_chart(fig2, use_container_width=True)
+best_price = opt["best_price"]
 
-    # ---------- Footer ----------
-    st.markdown("---")
-    st.caption("Tip: Use the sidebar to change margin, grid step, and price caps. Upload your own CSV anytime.")
+st.markdown("### Recommendation")
+st.metric("💡 Optimal Price", f"{best_price:.2f}")
+st.metric("📦 Predicted Sales", f"{opt['predicted_sales']:.0f}")
+st.metric("💰 Expected Profit", f"{opt['expected_profit']:.2f}")
+
+# ---------------- Plots ----------------
+prices = make_price_grid(opt["price_min_considered"], opt["price_max_considered"], grid_step)
+
+X_test = pd.DataFrame([latest] * len(prices))
+X_test["price"] = prices
+
+demand = np.clip(model.predict(X_test[FEATURES]), 0, None)
+profit = (prices - unit_cost) * demand
+
+c1, c2 = st.columns(2)
+
+with c1:
+    fig = px.line(x=prices, y=demand, labels={"x": "Price", "y": "Predicted Sales"})
+    fig.add_vline(x=best_price, line_dash="dash", line_color="green")
+    st.plotly_chart(fig, use_container_width=True)
+
+with c2:
+    fig = px.line(x=prices, y=profit, labels={"x": "Price", "y": "Profit"})
+    fig.add_vline(x=best_price, line_dash="dash", line_color="green")
+    st.plotly_chart(fig, use_container_width=True)

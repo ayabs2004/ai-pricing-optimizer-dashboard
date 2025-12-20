@@ -10,7 +10,10 @@
     "sales_lag1",
     "price_lag1",
     "sales_ma7",
-    "price_ma7"
+    "price_ma7",
+    "wheat_price",
+    "sugar_price"
   ],
-  "mae": 1.522
+  "mae": 20.219,
+  "r2_score": 0.671
 }
